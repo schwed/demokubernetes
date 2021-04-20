@@ -1,0 +1,254 @@
+apconfig-dev.yml
+
+appconfig:
+  - name: appcfg-central-apps-dev-euwe-1
+    prefixes:
+      - /ietv/central/kafka/
+  - name: appcfg-inv-dev-euwe-1
+    prefixes:
+      - /appinsights/
+      - /ietv/inv/v2/common/
+      - /ietv/inv/v2/btdel/
+
+------------------------------
+appconfig-lab.yaml
+
+appconfig:
+  - name: appcfg-central-apps-lab-euwe-1
+    prefixes:
+      - /ietv/central/kafka/
+  - name: appcfg-inv-v2lab-euwe-1
+    prefixes:
+      - /appinsights/
+      - /ietv/inv/common/
+      - /ietv/inv/btdel/
+
+
+---------------------------------
+
+Dockerfile
+
+# uses a Docker multi-stage build to install the unpacked fat Spring Boot application JAR
+FROM acrietvdeveuwe1.azurecr.io/distroless-jdk11:0.3.0 as builder
+WORKDIR /application
+ADD libs/application.jar application.jar
+RUN ["/usr/lib/jvm/zre-hl-11-azure-amd64/bin/java", "-Djarmode=layertools", "-jar", "application.jar", "extract"]
+ADD libs/app-insights-agent.jar app-insights-agent.jar
+
+FROM acrietvdeveuwe1.azurecr.io/distroless-jdk11:0.3.0
+WORKDIR /application
+# order of the COPY instructions is important
+# https://docs.spring.io/spring-boot/docs/current/gradle-plugin/reference/html/#packaging-layered-jars
+COPY --from=builder /application/app-insights-agent.jar ./app-insights-agent.jar
+COPY --from=builder /application/dependencies/ ./
+COPY --from=builder /application/spring-boot-loader/ ./
+COPY --from=builder /application/snapshot-dependencies/ ./
+# works around a 'layer not found' bug that's been open since 2018: https://github.com/moby/moby/issues/37965
+RUN ["true"]
+COPY --from=builder application/application/ ./
+
+# no ENTRYPOINT OR CMD - this is specified as the args field in the Kubernetes deployment instead
+
+----------------------------------------------------------------------------------------------------------------
+pipeline-cd-template.yaml
+
+stages:
+  - stage: build
+    jobs:
+      - job: deploy
+        pool: G69IaC-Private-Pool
+        steps:
+
+          - bash: 'echo "CIDOverride: $(CIDOverride)"'
+
+          - task: JavaToolInstaller@0
+            displayName: 'install java'
+            inputs:
+              versionSpec: '11'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: AzureStorage
+              azureResourceManagerEndpoint: 'G69-DEV-AzureRM-CENTRAL-DEV'
+              azureStorageAccountName: devtesttools
+              azureContainerName: tools
+              azureCommonVirtualFile: 'zulu11.43.21-ca-jdk11.0.9-swissre-linux_x64.tar.gz'
+              jdkDestinationDirectory: '$(System.DefaultWorkingDirectory)/jdk11'
+              cleanDestinationDirectory: true
+
+          - task: Gradle@2
+            displayName: 'gradlew build'
+            inputs:
+              gradleWrapperFile: '$(msPath)/gradlew'
+              workingDirectory: '$(msPath)'
+              tasks: 'clean build'
+              testResultsFiles: '$(msPath)/**/TEST-*.xml'
+
+          - task: Bash@3
+            displayName: 'Read chart version'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "##vso[task.setvariable variable=chartVersion]`yq r $(chartPath)/Chart.yaml 'version'`"
+
+          - task: Bash@3
+            displayName: 'Echo chart version'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo Chart version: ${CHART_VERSION}
+            env:
+              CHART_VERSION: '$(chartVersion)'
+
+          # This task authenticates with Azure using the build agent Managed Identity and
+          # uses the acquired token to login to Container Registry
+          - task: Bash@3
+            inputs:
+              targetType: 'inline'
+              script: |
+                az login --identity
+                az acr login --name $AZ_REGISTRY_NAME
+            env:
+              AZ_REGISTRY_NAME: '$(azRegistryName)'
+
+          - task: Docker@2
+            displayName: 'Build image'
+            inputs:
+              command: build
+              dockerfile: $(dockerfilePath)
+              repository: $(azRegistry)/$(imageRepository)
+              tags : '$(chartVersion)'
+
+          - task: Docker@2
+            displayName: 'Push image'
+            inputs:
+              command: push
+              repository: $(azRegistry)/$(imageRepository)
+              tags: $(chartVersion)
+
+          - task: KubectlInstaller@0
+            inputs:
+              kubectlVersion: '$(kubectlVersion)'
+
+          - task: HelmInstaller@1
+            inputs:
+              helmVersionToInstall: $(helmVersion)
+
+          - task: HelmDeploy@0
+            displayName: 'Attempt to delete the previously installed helm charts'
+            continueOnError: true
+            inputs:
+              connectionType: Kubernetes Service Connection
+              kubernetesServiceEndpoint: '$(targetCluster)'
+              namespace: '$(targetNamespace)'
+              command: delete
+              waitForExecution: true
+              arguments: '$(msName)'
+
+          - task: Bash@3
+            displayName: 'Build helm charts as an artifact'
+            inputs:
+              targetType: 'inline'
+              script: |
+                helm package --destination $(System.ArtifactsDirectory) $(System.DefaultWorkingDirectory)/$(chartPath);
+
+          - task: Bash@3
+            displayName: 'Push helm charts into the ACR'
+            inputs:
+              targetType: 'inline'
+              script: |
+                az acr helm push $(System.ArtifactsDirectory)/$(chartName)-$(chartVersion).tgz --name $(azRegistryName);
+
+          - task: Bash@3
+            displayName: 'Add private helm repo'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # newer versions of Helm will not overwrite previous registrations, meaning it will be out-of-date
+                helm repo remove $(azRegistryName)
+                az acr helm repo add --name $(azRegistryName)
+
+          - task: HelmDeploy@0
+            displayName: 'Helm deploy'
+            inputs:
+              connectionType: Kubernetes Service Connection
+              kubernetesServiceEndpoint: '$(targetCluster)'
+              namespace: '$(targetNamespace)'
+              chartName: '$(azRegistryName)/$(chartName)'
+              releaseName: $(chartName)
+              command: upgrade
+              install: true
+              waitForExecution: true
+              overrideValues: 'image.registry="$(azRegistry)'
+              arguments: "
+              --force
+              --timeout 5m0s
+              --version $(chartVersion)
+              --values $(System.DefaultWorkingDirectory)/$(msPath)/azure-pipelines/appconfig-$(env).yaml"
+
+-------------------------------------------------------------
+pipeline-deploy-to-dev.yaml
+
+name: 'inv btdel publisher deployment to dev'
+
+variables:
+  # Service info
+  msName:            'inv-btdel-publisher'
+  correlationId:     'dev'
+  msPath:            'Apps/am-inv/$(msName)'
+  imageRepository:   $(msName)
+  dockerfilePath:    '$(msPath)/build/Dockerfile'
+  azRegistryName:    'acrietvdeveuwe1'
+  azRegistry:        '$(azRegistryName).azurecr.io'
+  chartName:         $(msName)
+  chartPath:         '$(msPath)/build/helm-deploy/$(chartName)'
+  helmVersion:       '3.4.2'
+  kubectlVersion:    '1.19.7'
+  env:               'dev'
+
+  # Service connections
+  appConfigSC:       'G69-DEV-AzureRM-CENTRAL-DEV'
+  keyVaultSC:        'G69-DEV-AzureRM-CENTRAL-DEV'
+  appConfigSCInv:    'G69-DEV-AzureRM-INV-DEV'
+  targetCluster:     'G69-DEV-K8S-APPS-INV-MASTER'
+  targetNamespace:   'inv-master'
+
+trigger: none
+
+stages:
+  - template: ./pipeline-cd-template.yml
+
+-------------------------------------
+
+name: 'inv btdel publisher sonarqube validation'
+
+variables:
+  msName:           'inv-btdel-publisher'
+  msPath:           'Apps/am-inv/inv-btdel-publisher'
+  sonarProjectKey:  $(msName)
+
+trigger:
+  batch: true
+  branches:
+    include:
+      - master
+  paths:
+    include:
+      - Apps/am-inv/inv-btdel-publisher/*
+
+pool: G69IaC-Private-Pool
+
+stages:
+  - template: ../../azure-templates/pipeline-validation-sonarqube-template.yml
+
+-------------------------------------------------------------------------------
+name: 'inv btdel publisher nexusIQ validation'
+
+variables:
+  msName:   'inv-btdel-publisher'
+  msPath:   'Apps/am-inv/inv-btdel-publisher'
+
+trigger: none
+
+pool: G69IaC-Private-Pool
+
+stages:
+  - template: ../../azure-templates/pipeline-validation-nexusiq-template.yml

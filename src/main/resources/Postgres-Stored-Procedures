@@ -1,0 +1,1148 @@
+CREATE OR REPLACE PROCEDURE lab_inv_s5ack8.p_transform_mrp_tv(bundle integer)
+LANGUAGE plpgsql
+AS $procedure$
+declare
+       nexusExchangeBundledId integer default 0;
+       rowcount int4 default 0;
+begin
+nexusExchangeBundledId := bundle;
+RAISE INFO 'value of a : % at %: ', nexusExchangeBundledId, now();
+
+-- step 1
+rowcount = 0;
+RAISE INFO  'deleting from t_mrp_service_intermediate for bundleid % at time: %', nexusExchangeBundledId, now() ;
+
+delete
+       from
+              lab_inv_s5ack8.t_mrp_service_intermediate
+       where
+              nexus_exchange_bundle_id = nexusExchangeBundledId;
+
+GET DIAGNOSTICS rowcount = ROW_COUNT;
+
+RAISE INFO  'completed deleting % rows from t_mrp_service_intermediate for bundleid % at time: %', rowcount,nexusExchangeBundledId, now() ;
+
+rowcount=0;
+RAISE INFO  'deleting from t_mrp_flat_tv for bundleid % at time: %', nexusExchangeBundledId, now() ;
+
+delete
+       from
+              lab_inv_s5ack8.t_mrp_flat_tv
+       where
+              nexus_exchange_bundle_id = nexusExchangeBundledId;
+
+GET DIAGNOSTICS rowcount = ROW_COUNT;
+RAISE INFO  'completed deleting % rows from t_mrp_flat_tv for bundleid % at time: %', rowcount,nexusExchangeBundledId, now() ;
+
+-- step 2
+rowcount=0;
+RAISE INFO  'inserting into t_mrp_service_intermediate for bundleid % at time: %', nexusExchangeBundledId, now() ;
+
+insert into lab_inv_s5ack8.t_mrp_service_intermediate (accounting_date,
+                     portfolio_code,
+                     fsa_reporting_bp,
+                     business_segment,
+                     pillar,
+                     investmentline,
+                     investmentcentre,
+                     newmanagementunit,
+                     currency,
+                     layer1_product_group,
+                     layer2_security_group,
+                     product_type_name,
+                     mandate_code,
+                     mrp,
+                     instrument_key,
+                     fpsl_instrument_key,
+                     investment_type,
+                     out_pillar,
+                     portfolio_long_name,
+                     portfolio_group_set,
+                     portfolio_group_id,
+                     underlying_portfolio_code,
+                     portfolio_currency,
+                     investing_legal_entity_id,
+                     fpsl_portfolio_code,
+                     bt_id,
+                     sap_cre,
+                     inflow_outflow,
+                     reporting_scope,
+                     nexus_exchange_bundle_id,
+                     C55LGENT) with bundle_detail as (
+                     select
+                           nexus_exchange_bundle_id,
+                           table_name,
+                           exchange_id,
+                           dependent_nexus_exchange_bundle_id,
+                           dependent_service_name
+                     from
+                           lab_inv_s5ack8.t_nexus_exchange_bundle_detail
+                     where
+                           nexus_exchange_bundle_id = nexusExchangeBundledId
+       )
+       --select * from bundle_detail;
+,
+       frp_mrp_report as (
+              select
+                     accounting_date,
+                     portfolio_code,
+                     fsa_reporting_bp,
+                     business_segment,
+                     pillar,
+                     investmentline,
+                     investmentcentre,
+                     newmanagementunit,
+                     currency,
+                     layer1_product_group,
+                     layer2_security_group,
+                     product_type_name,
+                     mandate_code,
+                     mrp,
+                     nexus_exchg_id,
+                     bundle.nexus_exchange_bundle_id
+                     from bundle_detail bundle
+                     inner join lab_inv_s5ack8.t_stg_frp_mrp_report report
+                     on (bundle.exchange_id = report.nexus_exchg_id and bundle.table_name = 't_stg_frp_mrp_report')
+       )
+       --select * from frp_mrp_report;
+,
+       investment_type as (
+              select
+                     order_seq,
+                     sdl_id,
+                     master_data_id,
+                     master_data_name,
+                     source_system_ordering_time,
+                     system_time,
+                     evm_component,
+                     reporting_rule_level,
+                     evm_rule_level,
+                     risk_stripe,
+                     gl_account,
+                     pc,
+                     product_segment_code,
+                     layer_1_product_group,
+                     layer_2_security_group,
+                     inv_type,
+                     evm_dummy_fi,
+                     vt_from,
+                     vt_to,
+                     pnl_view_by_asset_class,
+                     pillar
+              from lab_mdm_s5ack8.t_mdm_iv_investment_type_map_new
+       )
+       --select * from investment_type;
+,
+       evm_acc_intermidiate as (
+              select
+                     business_date,
+                     intermediate.nexus_exchange_bundle_id,
+                     underlying_portfolio_code,
+                     portfolio_code,
+                     pillar,
+                     portfolio_group_set,
+                     reporting_scope,
+                     portfolio_currency,
+                     investing_business_segment,
+                     investing_legal_entity_id,
+                     investing_fsa_reporting_bp,
+                     investment_centre,
+                     management_unit_new,
+                     liability_type,
+                     uph_numeric_code,
+                     nexus_exchg_id,
+                     bpartner_id,
+                     source_fpslcode,
+                     bseg_fpslcode,
+                     out_pillar,
+                     account_status,
+                     authorization_group,
+                     organization_unit_owner,
+                     template,
+                     template_version,
+                     account_category,
+                     on_off_shore,
+                     business_class,
+                     fas_class,
+                     node_id,
+                     node_no,
+                     number_of_sons,
+                     contract_number,
+                     account_number,
+                     ypc_sdl_id,
+                     ext_contract_id_seq
+              from lab_inv_s5ack8.t_evm_acc_service_intermediate intermediate
+              inner join bundle_detail bundle
+              on (bundle.table_name = 't_evm_acc_service_intermediate')
+              --where bundle.nexus_exchange_bundle_id = nexusExchangeBundledId
+       )
+       --select * from evm_acc_intermidiate;
+,
+       mrp_intermediate as (
+              select accounting_date,
+                     portfolio_code,
+                     fsa_reporting_bp,
+                     business_segment,
+                     report.pillar,
+                     investmentline,
+                     investmentcentre,
+                     newmanagementunit,
+                     currency,
+                     layer1_product_group,
+                     layer2_security_group,
+                     product_type_name,
+                     mandate_code,
+                     mrp,
+                     coalesce(investment.evm_dummy_fi, '') as instrument_key,
+                     coalesce(concat(investment.evm_dummy_fi, '_', currency), '') as fpsl_instrument_key,
+                     coalesce(investment.inv_type, '') as investment_type,
+                     coalesce(null, '') as out_pillar,
+                     coalesce(null, '') as portfolio_long_name,
+                     coalesce(null, '') as portfolio_group_set,
+                     coalesce(null, '') as portfolio_group_id,
+                     coalesce(null, '') as underlying_portfolio_code,
+                     coalesce(null, '') as portfolio_currency,
+                     coalesce(null, '') as investing_legal_entity_id,
+                     coalesce(null, '') as fpsl_portfolio_code,
+                     coalesce(null, '') as bt_id,
+                     coalesce(null, '') as sap_cre,
+                     coalesce(null, '') as inflow_outflow,
+                     coalesce(null, '') as reporting_scope,
+                     report.nexus_exchange_bundle_id,
+                     coalesce(null, '') as C55LGENT,
+                     investment.inv_type
+                     from frp_mrp_report report
+                     join investment_type investment
+                     on (investment.layer_1_product_group = report.layer1_product_group
+                     and investment.layer_2_security_group = report.layer2_security_group)
+                     and report.newmanagementunit not like '%ASI%'
+                     and investment.evm_component = 'MRP_FRP'
+                     and investment.evm_rule_level = '3'
+                     and investment.reporting_rule_level = ''
+                     and investment.risk_stripe = ''
+                     and investment.gl_account = ''
+                     and investment.pc = ''
+                     and investment.product_segment_code = ''
+              UNION
+                     select
+                     accounting_date,
+                     portfolio_code,
+                     fsa_reporting_bp,
+                     business_segment,
+                     layer1.pillar,
+                     investmentline,
+                     investmentcentre,
+                     newmanagementunit,
+                     currency,
+                     layer1_product_group,
+                     layer2_security_group,
+                     product_type_name,
+                     mandate_code,
+                     mrp,
+                     coalesce(investment.evm_dummy_fi, null, '') as instrument_key,
+                     coalesce(concat(investment.evm_dummy_fi, '_', currency), null, '') as fpsl_instrument_key,
+                     coalesce(investment.inv_type, null, '') as investment_type,
+                     coalesce(null, '') as out_pillar,
+                     coalesce(null, '') as portfolio_long_name,
+                     coalesce(null, '') as portfolio_group_set,
+                     coalesce(null, '') as portfolio_group_id,
+                     coalesce(null, '') as underlying_portfolio_code,
+                     coalesce(null, '') as portfolio_currency,
+                     coalesce(null, '') as investing_legal_entity_id,
+                     coalesce(null, '') as fpsl_portfolio_code,
+                     coalesce(null, '') as bt_id,
+                     coalesce(null, '') as sap_cre,
+                     coalesce(null, '') as inflow_outflow,
+                     coalesce(null, '') as reporting_scope,
+                     layer1.nexus_exchange_bundle_id,
+                     coalesce(null, '') as C55LGENT,
+                     investment.inv_type
+                     from frp_mrp_report layer1
+                     join investment_type investment
+                     on (investment.layer_1_product_group = layer1.layer1_product_group and investment.layer_2_security_group = '')
+                     and upper(layer1.layer1_product_group) = 'EVM REPLICATING INSTRUMENTS'
+                     and investment.evm_component = 'MRP_FRP'
+                     and investment.evm_rule_level = '2'
+                     and investment.reporting_rule_level = ''
+                     and investment.risk_stripe = ''
+                     and investment.gl_account = ''
+                     and investment.pc = ''
+                     and investment.product_segment_code = ''
+              UNION
+                     select accounting_date,
+                     portfolio_code,
+                     fsa_reporting_bp,
+                     business_segment,
+                     level1.pillar,
+                     investmentline,
+                     investmentcentre,
+                     newmanagementunit,
+                     currency,
+                     layer1_product_group,
+                     layer2_security_group,
+                     product_type_name,
+                     mandate_code,
+                     mrp,
+                     coalesce(investment.evm_dummy_fi, null, '') as instrument_key,
+                     coalesce(concat(investment.evm_dummy_fi, '_', currency), null, '') as fpsl_instrument_key,
+                     coalesce(investment.inv_type, null, '') as investment_type,
+                     coalesce(null, '') as out_pillar,
+                     coalesce(null, '') as portfolio_long_name,
+                     coalesce(null, '') as portfolio_group_set,
+                     coalesce(null, '') as portfolio_group_id,
+                     coalesce(null, '') as underlying_portfolio_code,
+                     coalesce(null, '') as portfolio_currency,
+                     coalesce(null, '') as investing_legal_entity_id,
+                     coalesce(null, '') as fpsl_portfolio_code,
+                     coalesce(null, '') as bt_id,
+                     coalesce(null, '') as sap_cre,
+                     coalesce(null, '') as inflow_outflow,
+                     coalesce(null, '') as reporting_scope,
+                     level1.nexus_exchange_bundle_id,
+                     coalesce(null, '') as C55LGENT,
+                     investment.inv_type
+                     from frp_mrp_report level1
+                     join investment_type investment
+                     on investment.pc = level1.newmanagementunit
+                     and level1.newmanagementunit like '%ASI%'
+                     and investment.evm_component = 'MRP_FRP'
+                     and investment.evm_rule_level = '1'
+                     and investment.reporting_rule_level = ''
+                     and investment.risk_stripe = ''
+                     and investment.gl_account = ''
+                     and investment.product_segment_code = ''
+                     and layer1_product_group = ''
+                     and layer2_security_group = ''
+       )
+       --select * from mrp_intermediate;
+,
+       mrp_intermediate_output as (
+              select
+                     mrp.accounting_date,
+                     mrp.portfolio_code,
+                     mrp.fsa_reporting_bp,
+                     mrp.business_segment,
+                     mrp.pillar,
+                     mrp.investmentline,
+                     mrp.investmentcentre,
+                     mrp.newmanagementunit,
+                     mrp.currency,
+                     mrp.layer1_product_group,
+                     mrp.layer2_security_group,
+                     mrp.product_type_name,
+                     mrp.mandate_code,
+                     mrp.mrp,
+                     instrument_key,
+                     fpsl_instrument_key,
+                     investment_type,
+                     evm.out_pillar,
+                     concat(mrp.pillar, '_', evm.portfolio_group_set) as portfolio_long_name,
+                     evm.portfolio_group_set,
+                     evm.ext_contract_id_seq as portfolio_group_id,
+                     evm.underlying_portfolio_code,
+                     evm.portfolio_currency,
+                     evm.investing_legal_entity_id,
+                     concat(evm.out_pillar, '_', evm.ext_contract_id_seq, '_FRP' ) as fpsl_portfolio_code,
+                     concat(evm.out_pillar, '_', evm.ext_contract_id_seq, '_FRP', '_', mrp.inv_type, '_', mrp.currency ) as bt_id,
+                     mrp.sap_cre,
+                     mrp.inflow_outflow,
+                     evm.reporting_scope,
+                     mrp.nexus_exchange_bundle_id,
+                     coalesce(cast(evm.bpartner_id as varchar),'' ) as C55LGENT
+                     from mrp_intermediate mrp
+                     inner join evm_acc_intermidiate evm on
+                           evm.portfolio_code = mrp.portfolio_code
+                           and (evm.portfolio_code is not null and length(trim(evm.portfolio_code)) != 0 )) select
+                     *
+                     from mrp_intermediate_output;
+
+GET DIAGNOSTICS rowcount = ROW_COUNT;
+
+RAISE INFO  'completed inserting % rows into t_mrp_service_intermediate for bundleid % at time: %', rowcount,nexusExchangeBundledId, now() ;
+
+-- step 3
+rowcount = 0;
+RAISE INFO  'inserting into t_mrp_flat_tv for bundleid % at time: %', nexusExchangeBundledId, now() ;
+
+insert
+       into
+              lab_inv_s5ack8.t_mrp_flat_tv (
+              system_time,
+              nexus_exchange_bundle_id,
+              business_date,
+              cr0rda,
+              cr0type,
+       cr0rskydt,
+       c11nodeno,
+       c55secnno,
+       c55contct,
+       c55contid,
+              c41finst,
+              c55srcsys,
+              c55paypos,
+              c55curpos,
+              trancurr,
+              c55accrct,
+              c55accat,
+              k5scduwc,
+              k5scduwp,
+              c55accsy,
+              c55cmeth,
+              k5sfvamc,
+              k5sfvamp,
+              k5saintc,
+              k5saintp,
+              k5snsec,
+              k5sqsec,
+              k5snsecc,
+              unit,
+              c55clcltr,
+              c55curpay,
+              c55ioind,
+              c55prcsct,
+              c55slalc,
+              crcbecfvn,
+              crcpaycat,
+              k11prtky,
+              k5ttvscc,
+              k5ttvscp,
+              k5scdiop,
+              k5Scdioc,
+              k5scddcc,
+              k5scddcp,
+              poscurr ) with t_mrp_service_intermediate as (
+              select
+              accounting_date,
+              portfolio_code,
+              fpsl_instrument_key,
+              portfolio_currency,
+              'FRP' as source,
+              'FRP_MRP' as trans_type,
+              sum(mrp) as mrp
+              from
+              lab_inv_s5ack8.t_mrp_service_intermediate
+              where nexus_exchange_bundle_id = nexusExchangeBundledId
+              group by
+              accounting_date,
+              portfolio_code,
+              fpsl_instrument_key,
+              portfolio_currency )
+       --select * from t_mrp_service_intermediate;
+,
+       transpose as (
+              select
+              accounting_date,
+              portfolio_code,
+              fpsl_instrument_key,
+              portfolio_currency,
+              source,
+              trans_type,
+              unnest(array['MRP_AMOUNT' , 'MRP_AMOUNT_1']) as field_name,
+              unnest(array[(mrp), (mrp)*-1]) as amount
+              from
+              t_mrp_service_intermediate
+              group by
+              accounting_date,
+              portfolio_code,
+              fpsl_instrument_key,
+              portfolio_currency,
+              source,
+              trans_type,
+              mrp )
+       --select  * from  transpose;
+,
+       v_mdm_sl_evm_costrevenue_map as (
+              select
+              order_seq,
+              master_data_id,
+              master_data_name,
+              sdl_id,
+              source_system_fpsl_code,
+              transaction_sub_type,
+              field_name,
+              product_segment,
+              amount_type,
+              sap_cre,
+              sap_cre_desc,
+              inflow_outflow,
+                    "name",
+              parent,
+              "level",
+              active_from_date,
+              active_to_date,
+              active_indicator,
+              source_system_ordering_time,
+              system_time,
+                     "rank"
+              from
+              lab_mdm_s5ack8.v_mdm_sl_evm_costrevenue_map
+              where
+              source_system_fpsl_code = 'FRP')
+    --select * from v_mdm_sl_evm_costrevenue_map;
+,
+       ftattv_costrevenue_intermediate as (
+              select
+                     system_time,
+                     99 as nexus_exchange_bundle_id,
+                     accounting_date as business_date,
+                     'SAFI' as cr0rda,
+                     '_S_SCT_TVE' as cr0type,
+               accounting_date as cr0rskydt,
+              '0' as c11nodeno,
+              '1' as c55secnno,
+              '2' as c55contct,
+              portfolio_code as c55contid,
+                  fpsl_instrument_key as c41finst,
+                  source_system_fpsl_code as c55srcsys,
+                    null as c55paypos,
+                  portfolio_currency as c55curpos,
+                  portfolio_currency as trancurr,
+                  '211' as c55accrct,
+                  null as c55accat,
+                     amount as k5scduwc,
+                     amount as k5scduwp,
+                     'INT1' as c55accsy,
+                     'C195000' as c55cmeth,
+                     0 as k5sfvamc,
+                     0 as k5sfvamp,
+                     0 as k5saintc,
+                     0 as k5saintp,
+                  0 as k5snsec,
+                     0 as k5sqsec,
+                  '' as k5snsecc,
+                     '' as unit,
+                     'C1' as c55clcltr,
+                     portfolio_currency as c55curpay,
+                  inflow_outflow as c55ioind,
+                     '0' as c55prcsct,
+                     '50' as c55slalc,
+                     '0' as crcbecfvn,
+                     sap_cre as crcpaycat,
+                     '0' as k11prtky,
+                  amount as k5ttvscc,
+                     amount as k5ttvscp,
+                     amount as k5scdiop,
+                     amount as k5Scdioc,
+                     amount as k5scddcc,
+                     amount as k5scddcp,
+                     portfolio_currency as poscurr
+              from transpose intermediate
+              left outer join v_mdm_sl_evm_costrevenue_map map on
+              (intermediate.source = map.source_system_fpsl_code
+              and intermediate.trans_type = map.transaction_sub_type
+              and '10B' = map.product_segment
+              and
+              case
+                           when amount >= 0 then 'POS'
+                    else 'NEG'
+              end = map.amount_type
+              and intermediate.field_name = map.field_name)) select
+   *
+  from ftattv_costrevenue_intermediate;
+
+GET DIAGNOSTICS rowcount = ROW_COUNT;
+
+RAISE INFO  'completed inserting % rows into t_bt_service_intermediate for bundleid % at time: %', rowcount,nexusExchangeBundledId, now() ;
+
+end;
+
+
+$procedure$
+;
+
+
+==================================================
+
+CREATE OR REPLACE PROCEDURE lab_inv_s5ack8.p_transform_bt_settlement(bundle integer)
+LANGUAGE plpgsql
+AS $procedure$
+declare
+       nexusExchangeBundledId integer default 0;
+begin
+nexusExchangeBundledId := bundle;
+RAISE INFO 'value of a : % at %: ', nexusExchangeBundledId, now();
+
+-- step 1
+delete
+from
+       lab_inv_s5ack8.t_bt_service_intermediate
+where
+       nexus_exchange_bundle_id = nexusExchangeBundledId;
+
+insert
+       into
+              lab_inv_s5ack8.t_bt_service_intermediate (file_feed_type,
+              nexus_exchange_bundle_id,
+              product_segment,
+              business_transaction_id,
+              source_system,
+              business_transaction_class,
+              posting_date,
+              date_origin_system,
+              time_origin_system,
+              business_partner,
+              reversal_indicator,
+              reversal_id1,
+              val_date,
+              business_date,
+              yorigtrd,
+              position_class,
+              account_type,
+              account,
+              product_type,
+              external_contract,
+              amount,
+              transaction_amount,
+              currency,
+              transaction_currency,
+              trans_type,
+              posting_direction,
+              nominal_amount,
+              nominal_currency,
+              quantity,
+              unit,
+              father_product,
+              son_product,
+              node_number,
+              yxcisvc,
+              ympid,
+              ympname,
+              trading_partner,
+              position_number,
+              transaction_sub_type,
+              related_order_code,
+              underlying_portfolio_id,
+              transaction_type,
+              transaction_instrument_type,
+              item_number,
+              position_count) with global_date as (
+              select
+                     date_value as business_date
+              from
+                     lab_inv_s5ack8.t_ctl_global_date
+              where
+                     param_name = 'GLOBAL_DATE'
+       )
+       --select * from global_date
+,
+       bundle_detail as (
+              select
+                     nexus_exchange_bundle_id,
+                     table_name,
+                     exchange_id,
+                     dependent_nexus_exchange_bundle_id,
+                     dependent_service_name
+              from
+                     lab_inv_s5ack8.t_nexus_exchange_bundle_detail
+              where
+                     nexus_exchange_bundle_id = nexusExchangeBundledId
+                     -- this will be input to the procedure
+       )
+       --select * from bundle_detail;
+,
+       settlement_transaction_type as (
+              select
+                     transaction_type, transaction_instrument_type, transaction_type_settlement
+              from
+                     lab_mdm_s5ack8.t_mdm_sl_transactiontype_settlement_map_multiple ts
+              cross join global_date gd
+              where gd.business_date between active_from_date and active_to_date
+              and ts.active_indicator = 'Active'
+              group by transaction_type, transaction_instrument_type, transaction_type_settlement
+       )
+       --select     * from settlement_transaction_type;
+,
+      product_segment_map as (
+              select product_segment_code, product_segment_cat
+              from lab_mdm_s5ack8.t_mdm_sl_product_segment_map_array
+              cross join global_date gd
+              where gd.business_date between active_from_date and active_to_date
+              group by product_segment_code,product_segment_cat
+       )
+       --select * from product_segment_map;
+,
+      investment_transaction as (
+              select file_feed_type,
+                           bd.nexus_exchange_bundle_id,
+                           product_segment,
+                           business_transaction_id,
+                           source_system,
+                           business_transaction_class,
+                           posting_date,
+                           date_origin_system,
+                           time_origin_system,
+                           business_partner,
+                           reversal_indicator,
+                           reversal_id1,
+                           val_date,
+                           business_date,
+                           yorigtrd,
+                           position_class,
+                           account_type,
+                           account,
+                           product_type,
+                           external_contract,
+                           amount,
+                           transaction_amount,
+                           currency,
+                           transaction_currency,
+                           trans_type,
+                           posting_direction,
+                           nominal_amount,
+                           nominal_currency,
+                           quantity,
+                           unit,
+                           father_product,
+                           son_product,
+                           node_number,
+                           yxcisvc,
+                           ympid,
+                           ympname,
+                           trading_partner,
+                           position_number,
+                           transaction_sub_type,
+                           transaction_type,
+                           related_order_code,
+                           intermediate.underlying_portfolio_id,
+                           transaction_instrument_type,
+                           item_number,
+                           position_count
+              from bundle_detail bd
+              inner join lab_inv_s5ack8.t_bt_service_intermediate intermediate on
+                     (bd.dependent_nexus_exchange_bundle_id = intermediate.nexus_exchange_bundle_id)
+              left outer join lab_inv_s5ack8.t_stg_asset_portfolio_account ta on
+                     (intermediate.underlying_portfolio_id = ta.underlying_portfolio_id
+                     and ta.nexus_exchg_id in (select exchange_id  from bundle_detail where table_name = 't_stg_asset_portfolio_account')
+                     and ta.asset_portfolio_account_type = 'Cash Account 95X'
+                     and ta.account_is_active = 'Y'   )
+              where business_transaction_id is not null
+                     and business_transaction_class is not null
+                     and posting_date is not null
+                     and reversal_indicator is false
+                     and reversal_id1 is null
+                     and val_date is not null
+                     and business_date is not null
+                     and position_class is not null
+                     and amount is not null
+                     and trans_type is not null
+                     and related_order_code is not null
+              group by file_feed_type,
+                     bd.nexus_exchange_bundle_id,
+                     product_segment,
+                     business_transaction_id,
+                     source_system,
+                     business_transaction_class,
+                     posting_date,
+                     date_origin_system,
+                     time_origin_system,
+                     business_partner,
+                     reversal_indicator,
+                     reversal_id1,
+                     val_date,
+                     business_date,
+                     yorigtrd,
+                     position_class,
+                     account_type,
+                     account,
+                     product_type,
+                     external_contract,
+                     amount,
+                     transaction_amount,
+                     currency,
+                     transaction_currency,
+                     trans_type,
+                     posting_direction,
+                     nominal_amount,
+                     nominal_currency,
+                     quantity,
+                     unit,
+                     father_product,
+                     son_product,
+                     node_number,
+                     yxcisvc,
+                     ympid,
+                     ympname,
+                     trading_partner,
+                     position_number,
+                     transaction_sub_type,
+                     transaction_type,
+                     related_order_code,
+                     intermediate.underlying_portfolio_id,
+                     transaction_instrument_type,
+                     item_number,
+                     position_count
+       )
+--select * from investment_transaction;
+,
+       position_aggregation as (
+              select business_transaction_id, count(position_number) as position_count
+              from investment_transaction
+              group by business_transaction_id
+       )
+--select * from position_aggregation;
+,
+      transposed_input as (
+               select file_feed_type,
+                           nexus_exchange_bundle_id,
+                           product_segment,
+                           mq.business_transaction_id,
+                           source_system,
+                           business_transaction_class,
+                           posting_date,
+                           date_origin_system,
+                           time_origin_system,
+                           business_partner,
+                           reversal_indicator,
+                           reversal_id1,
+                           val_date,
+                           business_date,
+                           yorigtrd,
+                           position_class,
+                           account_type,
+                           account,
+                           product_type,
+                           external_contract,
+                           amount,
+                           transaction_amount,
+                           currency,
+                           transaction_currency,
+                           trans_type,
+                           posting_direction,
+                           nominal_amount,
+                           nominal_currency,
+                           quantity,
+                           unit,
+                           father_product,
+                           son_product,
+                           node_number,
+                           yxcisvc,
+                           ympid,
+                           ympname,
+                           trading_partner,
+                           position_number,
+                           transaction_sub_type,
+                           transaction_type,
+                           mq.related_order_code,
+                           underlying_portfolio_id,
+                           transaction_instrument_type,
+                           item_number,
+                           pa.position_count
+                    from investment_transaction mq
+                     inner join position_aggregation pa on
+                     (mq.business_transaction_id = pa.business_transaction_id)
+      )
+,
+       derived_transaction_type as (
+                     select a.file_feed_type,
+                           a.nexus_exchange_bundle_id,
+                           a.product_segment,
+                           a.business_transaction_id,
+                           a.source_system,
+                           a.business_transaction_class,
+                           a.posting_date,
+                           a.date_origin_system,
+                           a.time_origin_system,
+                           a.business_partner,
+                           a.reversal_indicator,
+                           a.reversal_id1,
+                           a.val_date,
+                           a.business_date,
+                           a.yorigtrd,
+                           a.position_class,
+                           a.account_type,
+                           a.account,
+                           a.product_type,
+                           a.external_contract,
+                           a.amount,
+                           a.transaction_amount,
+                           a.currency,
+                           a.transaction_currency,
+                           a.trans_type,
+                           a.posting_direction,
+                           a.nominal_amount,
+                           a.nominal_currency,
+                           a.quantity,
+                           a.unit,
+                           a.father_product,
+                           a.son_product,
+                           a.node_number,
+                           a.yxcisvc,
+                           a.ympid,
+                           a.ympname,
+                           a.trading_partner,
+                           a.position_number,
+                           a.transaction_sub_type,
+                     a.transaction_type,
+                     ts.transaction_type_settlement,
+                           a.related_order_code,
+                           a.underlying_portfolio_id,
+                           case
+                                  when a.position_count = 1 and (a.position_number = 1 or a.position_number = 2) and a.trans_type not in ('1A017D', '1A044D', '2B057D', '5E081S') then
+                                         'INSTRUMENT'
+                                         --'1'
+                                  when a.position_count = 1 and (a.position_number = 1 or a.position_number = 2) and a.trans_type in ('1A017D', '1A044D', '2B057D', '5E081S') then
+                                         'INSTRUMENT'
+                                         --'1'
+                                  when (a.position_count = 2 or a.position_count = 3) and a.position_number = 1 then
+                                         'INSTRUMENT'
+                                         --'1'
+                                  when (a.position_count = 2 or a.position_count = 3) and a.position_number = 2 then
+                                         'INSTRUMENT'
+                                         --'2'
+                           end    as transaction_instrument_type,
+                           case
+                                  when a.position_count = 1 and (a.position_number = 1 or a.position_number = 2) and a.trans_type not in ('1A017D', '1A044D', '2B057D', '5E081S') then
+                                         '1'
+                                  when a.position_count = 1 and (a.position_number = 1 or a.position_number = 2) and a.trans_type in ('1A017D', '1A044D', '2B057D', '5E081S') then
+                                         '1'
+                                  when (a.position_count = 2 or a.position_count = 3) and a.position_number = 1 then
+                                         '1'
+                                  when (a.position_count = 2 or a.position_count = 3) and a.position_number = 2 then
+                                         '2'
+                           end    as item_number,
+                           a.position_count
+                     from transposed_input a
+              left outer join lab_mdm_s5ack8.t_mdm_sl_transactiontype_settlement_map_multiple ts on
+                           a.trans_type = ts.transaction_type and
+                           ts.active_indicator = 'Active'
+                     union
+                     select b.file_feed_type,
+                           b.nexus_exchange_bundle_id,
+                           b.product_segment,
+                           b.business_transaction_id,
+                           b.source_system,
+                           b.business_transaction_class,
+                           b.posting_date,
+                           b.date_origin_system,
+                           b.time_origin_system,
+                           b.business_partner,
+                            b.reversal_indicator,
+                           b.reversal_id1,
+                           b.val_date,
+                           b.business_date,
+                           b.yorigtrd,
+                           b.position_class,
+                           b.account_type,
+                           b.account,
+                           b.product_type,
+                           b.external_contract,
+                           b.amount,
+                           b.transaction_amount,
+                           b.currency,
+                           b.transaction_currency,
+                           b.trans_type,
+                           b.posting_direction,
+                           b.nominal_amount,
+                           b.nominal_currency,
+                           b.quantity,
+                           b.unit,
+                           b.father_product,
+                           b.son_product,
+                           b.node_number,
+                           b.yxcisvc,
+                           b.ympid,
+                           b.ympname,
+                           b.trading_partner,
+                           b.position_number,
+                           b.transaction_sub_type,
+                     b.transaction_type,
+                     ts.transaction_type_settlement,
+                           b.related_order_code,
+                           b.underlying_portfolio_id,
+                           case
+                                  when b.position_count = 1 and (b.position_number = 1 or b.position_number = 2) and b.trans_type not in ('1A017D', '1A044D', '2B057D', '5E081S') then
+                                         'CASH'
+                                         --'2'
+                                  when (b.position_count = 2 or b.position_count = 3) and b.position_number = 1 then
+                                         'CASH'
+                                         --'3'
+                                  when (b.position_count = 2 or b.position_count = 3) and b.position_number = 2 then
+                                         'CASH'
+                                         --'4'
+                           end    as transaction_instrument_type,
+                           case
+                                  when b.position_count = 1 and (b.position_number = 1 or b.position_number = 2) and b.trans_type not in ('1A017D', '1A044D', '2B057D', '5E081S') then
+                                         '2'
+                                  when (b.position_count = 2 or b.position_count = 3) and b.position_number = 1 then
+                                         '3'
+                                  when (b.position_count = 2 or b.position_count = 3) and b.position_number = 2 then
+                                         '4'
+                           end    as item_number,
+                           b.position_count
+                           from transposed_input b
+                     left outer join lab_mdm_s5ack8.t_mdm_sl_transactiontype_settlement_map_multiple ts on
+                           b.trans_type = ts.transaction_type
+                           and ts.active_indicator = 'Active'
+              )
+             --select * from derived_transaction_type;
+,
+       transform as (
+                     select file_feed_type,
+                                  nexus_exchange_bundle_id,
+                                  product_segment,
+                                  --business_transaction_id,
+                                  case
+                                         when right(business_transaction_id, 2) != '_S'
+                                                and right(business_transaction_id, 4) != '_S_D'
+                                                and right(business_transaction_id, 2) != '_D'
+                                         then concat(business_transaction_id, '_S')
+                                         when right(business_transaction_id, 2) = '_D'
+                                                and reversal_indicator is true
+                                         then replace(business_transaction_id, '_D', '_S_D')
+                             end as business_transaction_id,
+                             source_system,
+                                  business_transaction_class,
+                                  --posting_date,
+                                  case
+                                         when right(business_transaction_id, 2) = '-2' -- repo maturity settlement date
+                                                      and posting_date is not null
+                                                      and date_part('dow', posting_date::TIMESTAMP) = 0 --Sunday (0)
+                                               then posting_date + INTERVAL '2 day' --Monday
+                                         when right(business_transaction_id, 2) = '-2'
+                                                      and posting_date is not null
+                                                      and date_part('dow', posting_date::TIMESTAMP) = 6 --Saturday (6)
+                                               then posting_date + INTERVAL '1 day' --Monday
+                                         else val_date
+                               end as posting_date,
+                                  date_origin_system,
+                                  time_origin_system,
+                                  business_partner,
+                                  reversal_indicator,
+                                  --reversal_id1,
+                                  case
+                                         when reversal_id1 is not null
+                                               and right(reversal_id1, 2) != '_S'
+                                         then concat(reversal_id1, '_S')
+                                         else reversal_id1
+                                  end as reversal_id1,
+                                  --val_date,
+                                  case
+                                         when right(business_transaction_id, 2) = '-2' -- repo maturity settlement date
+                                                      and posting_date is not null
+                                                      and date_part('dow', posting_date::TIMESTAMP) = 0 --Sunday (0)
+                                               then posting_date + INTERVAL '2 day' --Monday
+                                         when right(business_transaction_id, 2) = '-2'
+                                                      and posting_date is not null
+                                                      and date_part('dow', posting_date::TIMESTAMP) = 6 --Saturday (6)
+                                               then posting_date + INTERVAL '1 day' --Monday
+                                         else val_date
+                                  end as val_date,
+                                  business_date,
+                                  yorigtrd,
+                                  position_class,
+                                  --account_type,
+                                  case
+                                         when transaction_instrument_type = 'INSTRUMENT' and product_type = '00' then '02'
+                                         when transaction_instrument_type = 'INSTRUMENT' and product_type = '01' then '03'
+                                         when transaction_instrument_type = 'CASH' then '03'
+                                         when product_type !='00' then account_type else null
+                               end as account_type,
+                                  --account,
+                                  case
+                                         when product_type != '00' then UPPER(account) else null
+                                  end as account,
+                                  --product_type,
+                                  case
+                                         when transaction_instrument_type = 'INSTRUMENT' and account_type = '02' then '00'
+                                         when transaction_instrument_type = 'INSTRUMENT' and account_type = '03' then '01'
+                                         when transaction_instrument_type = 'INSTRUMENT' and product_type = '00' then '00'
+                                         when transaction_instrument_type = 'INSTRUMENT' and account_type = '02' then '00'
+                                         when transaction_instrument_type = 'CASH' then '01'
+                               end as product_type,
+                                  --external_contract,
+                                  case
+                                         when transaction_instrument_type = 'INSTRUMENT' then external_contract
+                                         when transaction_instrument_type = 'CASH' then account
+                                         else null
+                               end as external_contract,
+                                  coalesce(amount, 0) as amount,
+                                  coalesce(transaction_amount, 0) as transaction_amount,
+                                  currency,
+                                  transaction_currency,
+                                  transaction_type_settlement as trans_type,
+                                  --posting_direction,
+                                  case
+                                         when posting_direction ='D' then 'C'
+                                         else 'D'
+                                  end as posting_direction,
+                                  --nominal_amount,
+                                  case
+                                         when product_segment is not null
+                                               and product_segment = a.product_segment_code
+                                               and a.product_segment_cat like 'Deriviatives%' then nominal_amount
+                                         else 0
+                                  end as nominal_amount,
+                                  --nominal_currency,
+                                  case
+                                         when product_segment is not null
+                                               and product_segment = a.product_segment_code
+                                               and a.product_segment_cat like 'Deriviatives%' then nominal_currency
+                                         else null
+                                  end as nominal_currency,
+                                  --quantity,
+                                  case
+                                         when product_segment is not null
+                                               and product_segment = a.product_segment_code
+                                               and a.product_segment_cat like 'Deriviatives%' then quantity
+                                         else 0
+                                  end as quantity,
+                                  --unit,
+                                  case
+                                         when product_segment is not null
+                                               and product_segment = a.product_segment_code
+                                               and a.product_segment_cat like 'Deriviatives%' then unit
+                                         else null
+                                  end as unit,
+                                  --father_product,
+                                  case
+                                         when transaction_instrument_type = 'CASH' then father_product
+                                         else null
+                                  end as father_product,
+                                  --son_product,
+                                  case
+                                         when transaction_instrument_type = 'CASH' then son_product
+                                         else null
+                                  end as son_product,
+                                  --node_number,
+                                  case
+                                         when transaction_instrument_type = 'CASH' then node_number
+                                         else null
+                                  end as node_number,
+                                  yxcisvc,
+                                  ympid,
+                                  ympname,
+                                  trading_partner,
+                                  --position_number,
+                                  row_number() over(partition by nexus_exchange_bundle_id, business_transaction_id
+                                  order by
+                                  trans_type asc) as position_number,
+                                  transaction_sub_type,
+                           related_order_code,
+                           underlying_portfolio_id,
+                           transaction_type_settlement as transaction_type,
+                            transaction_instrument_type,
+                                  item_number,
+                                  position_count
+                           from derived_transaction_type
+                     left outer join product_segment_map a on
+                           (a.product_segment_code = derived_transaction_type.product_segment)
+                     where amount != 0
+                           and transaction_instrument_type is not null
+                           and item_number is not null) select
+                     *
+              from
+                     transform
+              order by
+                     nexus_exchange_bundle_id,
+                     business_transaction_id asc,
+                     position_number asc;
+
+-- Transform intermediate BT to FPSL Data Model
+CALL lab_inv_s5ack8.p_transform_bt_interm_to_fpsl(nexusExchangeBundledId);
+
+
+end;
+
+
+$procedure$
+;
